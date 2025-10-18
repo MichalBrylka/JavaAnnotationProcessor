@@ -7,9 +7,20 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
-        <module name="app" />
         <module name="annotations" />
         <module name="processor" />
+      </profile>
+      <profile name="Annotation profile for byte-serialization-root" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$PROJECT_DIR$/processor/target/classes" />
+          <entry name="$PROJECT_DIR$/annotations/target/classes" />
+          <entry name="$PROJECT_DIR$/processor/target/classes" />
+          <entry name="$PROJECT_DIR$/annotations/target/classes" />
+        </processorPath>
+        <module name="app" />
       </profile>
     </annotationProcessing>
   </component>

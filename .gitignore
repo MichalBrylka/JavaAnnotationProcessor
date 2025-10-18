@@ -1,0 +1,57 @@
+# ----------------------------------------------------------------------
+# IntelliJ IDEA
+# ----------------------------------------------------------------------
+# IntelliJ project files
+.idea/
+# Annotation processor generated sources
+/target/generated-sources/annotations
+# Local history for IDEA
+*.iml
+*.iws
+*.ipr
+out/
+
+# ----------------------------------------------------------------------
+# Java/Maven/Gradle
+# ----------------------------------------------------------------------
+
+# Maven build output
+**/target/
+
+# Gradle build output (for projects using Gradle)
+/build/
+.gradle/
+!build/wrapper/
+
+# Java class and resource files
+*.class
+
+# Log files
+*.log
+
+# Unit test reports
+/surefire-reports/
+/failsafe-reports/
+
+# Dependency files
+# JARs, WARs, EARs (unless they are checked into a 'lib' directory)
+*.jar
+*.war
+*.ear
+# JLink/JPackage output
+/jmod/
+/bin/
+
+# ----------------------------------------------------------------------
+# Operating System Files
+# ----------------------------------------------------------------------
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# Linux
+*~

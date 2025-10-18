@@ -1,10 +1,10 @@
-// src/main/java/com/example/processor/ByteSerializableProcessor.java
 package com.example;
 
 import com.example.annotations.ByteSerializable;
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
+import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
@@ -16,17 +16,27 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 @SupportedAnnotationTypes("com.example.annotations.ByteSerializable")
-@SupportedSourceVersion(SourceVersion.RELEASE_17) // Use your Java version
+@SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class ByteSerializableProcessor extends AbstractProcessor {
+
+    private TypeElement addressElement;
+    private TypeElement phoneNumberElement;
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        System.out.println("DUPAXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "ByteSerializableProcessor: processing annotations...");
+        // Step 1: Find all required type elements *before* processing
+        addressElement = processingEnv.getElementUtils().getTypeElement("com.example.Address");
+        phoneNumberElement = processingEnv.getElementUtils().getTypeElement("com.example.PhoneNumber");
+
         for (Element element : roundEnv.getElementsAnnotatedWith(ByteSerializable.class)) {
             if (element.getKind() == ElementKind.CLASS) {
                 TypeElement typeElement = (TypeElement) element;
                 try {
-                    generateSerializer(typeElement);
+                    // Only generate for the annotated class (Person)
+                    if (typeElement.getSimpleName().contentEquals("Person")) {
+                        generateFlatSerializer(typeElement);
+                    }
                 } catch (IOException e) {
                     processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Failed to generate serializer for " + typeElement.getQualifiedName() + ": " + e.getMessage());
                 }
@@ -35,38 +45,56 @@ public class ByteSerializableProcessor extends AbstractProcessor {
         return true;
     }
 
-    private void generateSerializer(TypeElement typeElement) throws IOException {
+    private void generateFlatSerializer(TypeElement typeElement) throws IOException {
         String packageName = processingEnv.getElementUtils().getPackageOf(typeElement).getQualifiedName().toString();
         String className = typeElement.getSimpleName().toString();
         String serializerClassName = className + "Serializer";
         String fullSerializerClassName = packageName.isEmpty() ? serializerClassName : packageName + "." + serializerClassName;
 
-        // Create a new source file
         JavaFileObject builderFile = processingEnv.getFiler().createSourceFile(fullSerializerClassName);
 
         try (PrintWriter out = new PrintWriter(builderFile.openWriter())) {
-            writeClassHeader(out, packageName, className, serializerClassName);
-
-            // Get fields (assuming Lombok @Value creates fields matching constructor arguments)
             List<VariableElement> fields = getRelevantFields(typeElement);
 
-            // Serialization method
-            writeSerializationMethod(out, className, fields);
+            writeClassHeader(out, packageName, className, serializerClassName);
 
-            // Deserialization method
-            writeDeserializationMethod(out, className, fields);
+            // 1. Serialization Method (Main Entry)
+            writeMainSerializationMethod(out, className, fields);
+
+            // 2. Deserialization Method (Main Entry)
+            writeMainDeserializationMethod(out, className);
+
+            // 3. Helper Methods for Nested Types (Address and PhoneNumber)
+            writeNestedSerializationHelper(out, addressElement);
+            writeNestedDeserializationHelper(out, addressElement);
+            writeNestedSerializationHelper(out, phoneNumberElement);
+            writeNestedDeserializationHelper(out, phoneNumberElement);
 
             writeClassFooter(out);
         }
     }
 
+    // --- Utility Methods ---
+
     private List<VariableElement> getRelevantFields(TypeElement typeElement) {
-        // Collect all non-static fields declared in the class
         return typeElement.getEnclosedElements().stream()
                 .filter(e -> e.getKind() == ElementKind.FIELD)
                 .map(e -> (VariableElement) e)
                 .collect(Collectors.toList());
     }
+
+    private String extractGenericType(TypeMirror type) {
+        if (type.getKind() == TypeKind.DECLARED) {
+            DeclaredType declaredType = (DeclaredType) type;
+            List<? extends TypeMirror> typeArguments = declaredType.getTypeArguments();
+            if (!typeArguments.isEmpty()) {
+                return typeArguments.getFirst().toString();
+            }
+        }
+        return null;
+    }
+
+    // --- Code Generation Writers (Refactored) ---
 
     private void writeClassHeader(PrintWriter out, String packageName, String className, String serializerClassName) {
         if (!packageName.isEmpty()) {
@@ -78,151 +106,60 @@ public class ByteSerializableProcessor extends AbstractProcessor {
         out.println("import java.util.ArrayList;");
         out.println("import java.util.List;");
         out.println();
-        out.println("public class " + serializerClassName + " {");
+        out.println("public final class " + serializerClassName + " {");
+        out.println("    private " + serializerClassName + "() { throw new UnsupportedOperationException(); }"); // Utility class
     }
 
     private void writeClassFooter(PrintWriter out) {
         out.println("}");
     }
 
-    private void writeSerializationMethod(PrintWriter out, String className, List<VariableElement> fields) {
+    // --- Main Serialization Logic (Person) ---
+
+    private void writeMainSerializationMethod(PrintWriter out, String className, List<VariableElement> fields) {
         out.println();
         out.println("    public static byte[] serialize(" + className + " obj) throws IOException {");
         out.println("        try (ByteArrayOutputStream bos = new ByteArrayOutputStream();");
         out.println("             DataOutputStream dos = new DataOutputStream(bos)) {");
 
-        for (VariableElement field : fields) {
-            String fieldName = field.getSimpleName().toString();
-            String typeName = field.asType().toString();
-            String getter = "obj.get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1) + "()";
-
-            if (typeName.equals("int")) {
-                out.println("            dos.writeInt(" + getter + ");");
-            } else if (typeName.equals("java.lang.String")) {
-                out.println("            dos.writeUTF(" + getter + ");");
-            } else if (typeName.equals("java.time.LocalDate")) {
-                out.println("            dos.writeUTF(" + getter + ".toString()); // Store as ISO String");
-            } else if (typeName.startsWith("java.util.List")) {
-                // Simplified List serialization (assuming List<T> where T is simple or a custom class)
-                // WARNING: This simplified logic relies on the List being a simple List<T>
-                out.println("            dos.writeInt(" + getter + ".size());");
-                out.println("            for (Object item : " + getter + ") {");
-
-                // Simplified logic to deduce the item type for serialization.
-                // In a real processor, we would need to inspect the generic type argument.
-                String genericType = extractGenericType(typeName);
-                if (genericType != null) {
-                    if (genericType.equals("com.example.PhoneNumber")) { // Assuming custom class path
-                        out.println("                com.example.PhoneNumberSerializer.serialize(dos, (com.example.PhoneNumber)item);");
-                    } else if (genericType.equals("java.lang.String")) {
-                        out.println("                dos.writeUTF((String)item);");
-                    } else {
-                        out.println("                // WARNING: Type " + genericType + " not fully supported in list. Using standard Object stream.");
-                        out.println("                dos.writeUTF(((Object)item).toString());");
-                    }
-                }
-                out.println("            }");
-
-            } else {
-                // Assume custom object types are also @ByteSerializable and have a static Serializer method
-                out.println("            " + typeName + "Serializer.serialize(dos, " + getter + ");");
-            }
-        }
+        // Delegate to the stream helper
+        out.println("            serialize(dos, obj);");
 
         out.println("            dos.flush();");
         out.println("            return bos.toByteArray();");
         out.println("        }");
         out.println("    }");
-    }
-    
-    // Helper method for custom object serialization inside lists
-    private void writeCustomObjectSerializeHelper(PrintWriter out, String className, List<VariableElement> fields) {
+
         out.println();
         out.println("    public static void serialize(DataOutputStream dos, " + className + " obj) throws IOException {");
         for (VariableElement field : fields) {
-            String fieldName = field.getSimpleName().toString();
-            String typeName = field.asType().toString();
-            String getter = "obj.get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1) + "()";
-
-            // Simplified: only support primitives/String/LocalDate/CustomObj. No List in this helper.
-            if (typeName.equals("int")) {
-                out.println("        dos.writeInt(" + getter + ");");
-            } else if (typeName.equals("java.lang.String")) {
-                out.println("        dos.writeUTF(" + getter + ");");
-            } else if (typeName.equals("java.time.LocalDate")) {
-                out.println("        dos.writeUTF(" + getter + ".toString());");
-            } else if (!typeName.startsWith("java.util.List")) {
-                 out.println("        " + typeName + "Serializer.serialize(dos, " + getter + ");");
-            } else {
-                 out.println("        // Unsupported field type in nested class helper: " + typeName);
-            }
+            writeSerializationField(out, field, "obj");
         }
         out.println("    }");
     }
 
+    // --- Main Deserialization Logic (Person) ---
 
-    private void writeDeserializationMethod(PrintWriter out, String className, List<VariableElement> fields) {
-        // Generate the custom helper method for custom objects first
-        if (!className.equals("Person")) { // Only generate helper for nested classes
-             writeCustomObjectDeserializeHelper(out, className, fields);
-        }
-        
-        // Main deserialization method
+    private void writeMainDeserializationMethod(PrintWriter out, String className) {
         out.println();
         out.println("    public static " + className + " deserialize(byte[] bytes) throws IOException {");
         out.println("        try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes);");
         out.println("             DataInputStream dis = new DataInputStream(bis)) {");
-        out.println("            return deserialize(dis);"); // Delegate to the stream-based helper
+        out.println("            return deserialize(dis);");
         out.println("        }");
         out.println("    }");
 
-        // Stream-based helper for both main and nested object deserialization
+        // Delegate stream helper (called by main and potentially others if Person was nested)
         out.println();
         out.println("    public static " + className + " deserialize(DataInputStream dis) throws IOException {");
 
+        List<VariableElement> fields = getRelevantFields(processingEnv.getElementUtils().getTypeElement("com.example.Person"));
+
         for (VariableElement field : fields) {
-            String fieldName = field.getSimpleName().toString();
-            String typeName = field.asType().toString();
-            String rawType = field.asType().getKind() == TypeKind.DECLARED ? ((TypeElement) processingEnv.getTypeUtils().asElement(field.asType())).getQualifiedName().toString() : typeName;
-
-            out.print("        final " + typeName + " " + fieldName + " = ");
-
-            if (typeName.equals("int")) {
-                out.println("dis.readInt();");
-            } else if (typeName.equals("java.lang.String")) {
-                out.println("dis.readUTF();");
-            } else if (typeName.equals("java.time.LocalDate")) {
-                out.println("LocalDate.parse(dis.readUTF());");
-            } else if (typeName.startsWith("java.util.List")) {
-                // Simplified List deserialization
-                out.println("new ArrayList<>();");
-                out.println("        final int " + fieldName + "Size = dis.readInt();");
-                out.println("        for (int i = 0; i < " + fieldName + "Size; i++) {");
-                
-                String genericType = extractGenericType(typeName);
-                if (genericType != null) {
-                    if (genericType.equals("com.example.PhoneNumber")) {
-                        out.println("            " + fieldName + ".add(" + genericType + "Serializer.deserialize(dis));");
-                    } else if (genericType.equals("java.lang.String")) {
-                        out.println("            " + fieldName + ".add(dis.readUTF());");
-                    } else {
-                        out.println("            // WARNING: Type " + genericType + " not fully supported in list.");
-                        out.println("            // Fallback for custom type in list: requires a dedicated deserialize(dis) method.");
-                        out.println("            // Assuming a simple String for the unhandled case for compilation purposes.");
-                        out.println("            " + fieldName + ".add(dis.readUTF());"); 
-                    }
-                }
-
-                out.println("        }");
-                out.print("        // Skipping instantiation here, it's already done: "); // Reset the assignment line
-                out.println(); // Add a newline after the loop
-            } else {
-                // Assume custom object types are also @ByteSerializable
-                out.println(typeName + "Serializer.deserialize(dis);");
-            }
+            writeDeserializationField(out, field);
         }
 
-        // Generate the constructor call to create the final object (Lombok @Value creates an all-args constructor)
+        // Constructor call
         String constructorArgs = fields.stream()
                 .map(e -> e.getSimpleName().toString())
                 .collect(Collectors.joining(", "));
@@ -230,22 +167,94 @@ public class ByteSerializableProcessor extends AbstractProcessor {
         out.println("        return new " + className + "(" + constructorArgs + ");");
         out.println("    }");
     }
-    
-    // Helper method for custom object deserialization (used inside the main Person logic)
-    private void writeCustomObjectDeserializeHelper(PrintWriter out, String className, List<VariableElement> fields) {
+
+    // --- Nested Type Helper Generators ---
+
+    private void writeNestedSerializationHelper(PrintWriter out, TypeElement typeElement) {
+        String className = typeElement.getSimpleName().toString();
+        List<VariableElement> fields = getRelevantFields(typeElement);
+
         out.println();
-        out.println("    public static void deserialize(DataInputStream dis, " + className + " obj) throws IOException {");
-        // This helper is for *deserializing into* an existing object, which contradicts Lombok @Value's immutable nature.
-        // The correct approach is to use the all-args constructor, as done in the main deserialize method.
-        // Therefore, we only need the stream-based static factory method `deserialize(DataInputStream dis)`.
+        out.println("    private static void serialize" + className + "(DataOutputStream dos, " + className + " obj) throws IOException {");
+        for (VariableElement field : fields) {
+            writeSerializationField(out, field, "obj");
+        }
+        out.println("    }");
     }
 
-    private String extractGenericType(String typeName) {
-        int start = typeName.indexOf("<");
-        int end = typeName.lastIndexOf(">");
-        if (start != -1 && end != -1 && start < end) {
-            return typeName.substring(start + 1, end).trim();
+    private void writeNestedDeserializationHelper(PrintWriter out, TypeElement typeElement) {
+        String className = typeElement.getSimpleName().toString();
+        List<VariableElement> fields = getRelevantFields(typeElement);
+
+        out.println();
+        out.println("    private static " + className + " deserialize" + className + "(DataInputStream dis) throws IOException {");
+
+        for (VariableElement field : fields) {
+            writeDeserializationField(out, field);
         }
-        return null;
+
+        // Constructor call
+        String constructorArgs = fields.stream()
+                .map(e -> e.getSimpleName().toString())
+                .collect(Collectors.joining(", "));
+
+        out.println("        return new " + className + "(" + constructorArgs + ");");
+        out.println("    }");
+    }
+
+    // --- Field Serialization Logic (Centralized) ---
+
+    private void writeSerializationField(PrintWriter out, VariableElement field, String objectName) {
+        String fieldName = field.getSimpleName().toString();
+        String typeName = field.asType().toString();
+        String getter = objectName + ".get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1) + "()";
+
+        if (typeName.equals("int")) {
+            out.println("        dos.writeInt(" + getter + ");");
+        } else if (typeName.equals("java.lang.String")) {
+            out.println("        dos.writeUTF(" + getter + ");");
+        } else if (typeName.equals("java.time.LocalDate")) {
+            out.println("        dos.writeUTF(" + getter + ".toString());");
+        } else if (typeName.equals("com.example.Address")) {
+            out.println("        serializeAddress(dos, " + getter + ");");
+        } else if (typeName.startsWith("java.util.List")) {
+            // Simplified List serialization
+            out.println("        dos.writeInt(" + getter + ".size());");
+            out.println("        for (com.example.PhoneNumber item : " + getter + ") {");
+            out.println("            serializePhoneNumber(dos, item);");
+            out.println("        }");
+        } else {
+            // Fallback for unsupported types, should ideally throw an error
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "Unsupported field type encountered: " + typeName + " in " + objectName);
+        }
+    }
+
+    // --- Field Deserialization Logic (Centralized) ---
+
+    private void writeDeserializationField(PrintWriter out, VariableElement field) {
+        String fieldName = field.getSimpleName().toString();
+        String typeName = field.asType().toString();
+
+        out.print("        final " + typeName + " " + fieldName + " = ");
+
+        if (typeName.equals("int")) {
+            out.println("dis.readInt();");
+        } else if (typeName.equals("java.lang.String")) {
+            out.println("dis.readUTF();");
+        } else if (typeName.equals("java.time.LocalDate")) {
+            out.println("LocalDate.parse(dis.readUTF());");
+        } else if (typeName.equals("com.example.Address")) {
+            out.println("deserializeAddress(dis);");
+        } else if (typeName.startsWith("java.util.List")) {
+            // Simplified List deserialization (assumes List<PhoneNumber>)
+            out.println("new ArrayList<>();");
+            out.println("        final int " + fieldName + "Size = dis.readInt();");
+            out.println("        for (int i = 0; i < " + fieldName + "Size; i++) {");
+            out.println("            " + fieldName + ".add(deserializePhoneNumber(dis));");
+            out.println("        }");
+        } else {
+            // Fallback for unsupported types, ideally throw an error
+            out.println("null; // Unsupported field type: " + typeName);
+        }
     }
 }

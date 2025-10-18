@@ -3,7 +3,7 @@ package com.example;
 
 import com.example.annotations.ByteSerializable;
 
-import java.io.IOException;
+import java.io.*;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -14,15 +14,15 @@ public class Main {
         Address home = new Address("Main St", 101);
 
         Person original = new Person(
-            LocalDate.of(1990, 1, 1), 
-            "Alice", 
-            2, 
-            home, 
-            List.of(work, new PhoneNumber("555-9999", 1))
+                LocalDate.of(1990, 1, 1),
+                "Alice",
+                2,
+                home,
+                List.of(work, new PhoneNumber("555-9999", 1))
         );
 
         // --- SERIALIZE ---
-        /*byte[] data = PersonSerializer.serialize(original);
+        byte[] data = PersonSerializer.serialize(original);
         System.out.println("Serialized size: " + data.length + " bytes.");
 
         // --- DESERIALIZE ---
@@ -31,7 +31,8 @@ public class Main {
         // --- VERIFY ---
         System.out.println("Original: " + original);
         System.out.println("Deserialized: " + deserialized);
-        System.out.println("Match: " + original.equals(deserialized)); // Should be true thanks to Lombok*/
+        System.out.println("Match: " + original.equals(deserialized));
+
     }
 }
 
@@ -100,7 +101,6 @@ final class Person {
     public String toString() {return "Person(dateOfBirth=" + this.getDateOfBirth() + ", name=" + this.getName() + ", numberOfArms=" + this.getNumberOfArms() + ", address=" + this.getAddress() + ", phoneNumbers=" + this.getPhoneNumbers() + ")";}
 }
 
-@ByteSerializable
 final class Address {
     private final String street;
     private final int number;
@@ -137,7 +137,6 @@ final class Address {
     public String toString() {return "Address(street=" + this.getStreet() + ", number=" + this.getNumber() + ")";}
 }
 
-@ByteSerializable
 final class PhoneNumber {
     private final String number;
     private final int countryCode;
